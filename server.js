@@ -46,7 +46,7 @@ For e-commerce advice: Focus on finding seven-figure products, 65%+ profit margi
 Provide specific, actionable advice based on their current scores. Be encouraging but direct.`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-3.5-turbo",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: message }
