@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
+const { google } = require('googleapis');
 require('dotenv').config();
 
 const app = express();
@@ -12,18 +13,101 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ status: 'Life Tracker AI Backend is running!' });
+// Initialize Google Docs API
+const auth = new google.auth.GoogleAuth({
+  keyFile: './google-credentials.json', // Your service account key file
+  scopes: ['https://www.googleapis.com/auth/documents.readonly'],
 });
 
-// AI Coach endpoint
+const docs = google.docs({ version: 'v1', auth });
+
+// Document IDs - Add your Google Doc IDs here
+const DOCUMENT_IDS = {
+  financial: 'YOUR_FINANCIAL_DOC_ID',
+  health: 'YOUR_HEALTH_DOC_ID', 
+  relationships: 'YOUR_RELATIONSHIPS_DOC_ID',
+  growth: 'YOUR_GROWTH_DOC_ID',
+  purpose: 'YOUR_PURPOSE_DOC_ID',
+  ecommerce: 'YOUR_ECOMMERCE_DOC_ID'
+};
+
+// Function to fetch and parse Google Doc content
+async function fetchGoogleDoc(documentId) {
+  try {
+    const res = await docs.documents.get({ documentId });
+    const content = res.data;
+    
+    // Extract text from document
+    let text = '';
+    content.body.content.forEach(element => {
+      if (element.paragraph) {
+        element.paragraph.elements.forEach(elem => {
+          if (elem.textRun) {
+            text += elem.textRun.content;
+          }
+        });
+      }
+    });
+    
+    return text;
+  } catch (error) {
+    console.error(`Error fetching document ${documentId}:`, error);
+    return '';
+  }
+}
+
+// Cache for document content (refreshes every hour)
+let documentCache = {};
+let cacheTimestamp = 0;
+
+async function getDocumentContent() {
+  const now = Date.now();
+  const ONE_HOUR = 60 * 60 * 1000;
+  
+  // Refresh cache if older than 1 hour
+  if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
+    console.log('Refreshing document cache...');
+    
+    for (const [category, docId] of Object.entries(DOCUMENT_IDS)) {
+      if (docId && docId !== 'YOUR_' + category.toUpperCase() + '_DOC_ID') {
+        documentCache[category] = await fetchGoogleDoc(docId);
+      }
+    }
+    
+    cacheTimestamp = now;
+  }
+  
+  return documentCache;
+}
+
+// AI Coach endpoint with Google Docs integration
 app.post('/api/ai-coach', async (req, res) => {
   try {
     const { message, context } = req.body;
     
-    // Create a detailed system prompt with your principles
-    const systemPrompt = `You are an expert life coach using the Five Pillars framework: Financial Success, Health & Fitness, Relationships, Personal Growth, and Purpose & Joy.
+    // Fetch latest document content
+    const documents = await getDocumentContent();
+    
+    // Create comprehensive system prompt with document content
+    const systemPrompt = `You are an expert life coach using the Five Pillars framework. You have access to comprehensive knowledge from the following documents:
+
+FINANCIAL SUCCESS PRINCIPLES:
+${documents.financial || 'No financial document loaded'}
+
+HEALTH & FITNESS PRINCIPLES:
+${documents.health || 'No health document loaded'}
+
+RELATIONSHIPS PRINCIPLES:
+${documents.relationships || 'No relationships document loaded'}
+
+PERSONAL GROWTH PRINCIPLES:
+${documents.growth || 'No growth document loaded'}
+
+PURPOSE & JOY PRINCIPLES:
+${documents.purpose || 'No purpose document loaded'}
+
+E-COMMERCE STRATEGIES:
+${documents.ecommerce || 'No e-commerce document loaded'}
 
 Current user data:
 - Financial Success: ${context.pillars[0].value}% (Goal: ${context.pillars[0].goal}%)
@@ -34,16 +118,13 @@ Current user data:
 - Overall Balance: ${context.overallScore}%
 - Lowest Pillar: ${context.lowestPillar.name} at ${context.lowestPillar.value}%
 
-Key principles to reference:
-1. Financial: Entrepreneurship is a privilege, niche down, build network fast, focus on ONE thing
-2. Health: Sleep system with bedtime alarm, gym as non-negotiable, no excuses
-3. Relationships: Build strong foundation, give undivided attention, honor your word
-4. Growth: AAA Method (Action, Analyze, Adjust), reject victim mentality, take micro-steps
-5. Purpose: Define true happiness, holistic KPIs, strategic downtime
-
-For e-commerce advice: Focus on finding seven-figure products, 65%+ profit margins, build brand authority, use TikTok and Meta ads, simplicity scales.
-
-Provide specific, actionable advice based on their current scores. Be encouraging but direct.`;
+Instructions:
+1. Reference specific principles from the documents when giving advice
+2. Synthesize information across different pillars when relevant
+3. Provide actionable steps based on their current scores
+4. Connect strategies from different documents to create holistic advice
+5. If asked to summarize, provide clear, structured summaries
+6. Be encouraging but direct, using exact principles from the documents`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -67,6 +148,21 @@ Provide specific, actionable advice based on their current scores. Be encouragin
       error: 'Failed to get AI response' 
     });
   }
+});
+
+// Endpoint to check which documents are loaded
+app.get('/api/documents-status', async (req, res) => {
+  const documents = await getDocumentContent();
+  const status = {};
+  
+  for (const [category, content] of Object.entries(documents)) {
+    status[category] = {
+      loaded: content.length > 0,
+      characterCount: content.length
+    };
+  }
+  
+  res.json(status);
 });
 
 const PORT = process.env.PORT || 3000;
