@@ -15,7 +15,7 @@ const openai = new OpenAI({
 
 // Initialize Google Docs API
 const auth = new google.auth.GoogleAuth({
-  keyFile: './google-credentials.json', // Your service account key file
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}'),
   scopes: ['https://www.googleapis.com/auth/documents.readonly'],
 });
 
