@@ -21,92 +21,35 @@ const auth = new google.auth.GoogleAuth({
 
 const docs = google.docs({ version: 'v1', auth });
 
-// Document IDs - Now supports multiple docs per category
+// Document IDs - Multiple docs per category supported
 const DOCUMENT_IDS = {
   financial: [
-    '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM/edit?tab=t.0#heading=h.q2mx0byt7fz0', // Your main financial principles doc
-    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60/edit?tab=t.0#heading=h.waxohxqw4j1p', // Your e-commerce strategies doc
-    'DOC_ID_3'  // Your investment guide doc
+    '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM', // Main financial principles
+    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60', // E-commerce strategies
+    'DOC_ID_3'  // Your investment guide doc (placeholder)
   ],
   health: [
-    'DOC_ID_4', // Physical fitness doc
-    'DOC_ID_5'  // Mental health & stress management doc
+    'DOC_ID_4', // Physical fitness doc (placeholder)
+    'DOC_ID_5'  // Mental health & stress management doc (placeholder)
   ],
   relationships: [
-    'DOC_ID_6', // Family relationships doc
-    'DOC_ID_7', // Professional networking doc
-    'DOC_ID_8'  // Social connections doc
+    'DOC_ID_6', // Family relationships doc (placeholder)
+    'DOC_ID_7', // Professional networking doc (placeholder)
+    'DOC_ID_8'  // Social connections doc (placeholder)
   ],
   growth: [
-    'DOC_ID_9',  // Learning strategies doc
-    'DOC_ID_10'  // Mindset principles doc
+    'DOC_ID_9',  // Learning strategies doc (placeholder)
+    'DOC_ID_10'  // Mindset principles doc (placeholder)
   ],
   purpose: [
     '1So9QI--hsQUj2FEKQoXcrjGLIo6zZzT02Wrm8MexP0E'  // Purpose and fulfillment doc
   ],
   ecommerce: [
-    'DOC_ID_12', // Dropshipping guide
-    'DOC_ID_13', // Website optimization doc
-    'DOC_ID_14'  // Marketing strategies doc
+    'DOC_ID_12', // Dropshipping guide (placeholder)
+    'DOC_ID_13', // Website optimization doc (placeholder)
+    'DOC_ID_14'  // Marketing strategies doc (placeholder)
   ]
 };
-
-// Updated function to fetch multiple docs per category
-async function getDocumentContent() {
-  const now = Date.now();
-  const ONE_HOUR = 60 * 60 * 1000;
-  
-  if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
-    console.log('Refreshing document cache...');
-    
-    for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
-      documentCache[category] = '';
-      
-      // Handle both single doc ID (string) and multiple (array)
-      const ids = Array.isArray(docIds) ? docIds : [docIds];
-      
-      for (const docId of ids) {
-        if (docId && !docId.includes('DOC_ID')) {
-          const content = await fetchGoogleDoc(docId);
-          if (content) {
-            // Add document separator for clarity
-            documentCache[category] += `\n\n--- Document: ${docId} ---\n\n${content}`;
-          }
-        }
-      }
-    }
-    
-    cacheTimestamp = now;
-  }
-  
-  return documentCache;
-}
-
-// Optional: Enhanced status endpoint to show all loaded docs
-app.get('/api/documents-status', async (req, res) => {
-  const status = {};
-  
-  for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
-    const ids = Array.isArray(docIds) ? docIds : [docIds];
-    status[category] = {
-      documentCount: ids.length,
-      documents: []
-    };
-    
-    for (const docId of ids) {
-      if (docId && !docId.includes('DOC_ID')) {
-        const content = await fetchGoogleDoc(docId);
-        status[category].documents.push({
-          id: docId,
-          loaded: content.length > 0,
-          characterCount: content.length
-        });
-      }
-    }
-  }
-  
-  res.json(status);
-});
 
 // Function to fetch and parse Google Doc content
 async function fetchGoogleDoc(documentId) {
@@ -128,7 +71,7 @@ async function fetchGoogleDoc(documentId) {
     
     return text;
   } catch (error) {
-    console.error(`Error fetching document ${documentId}:`, error);
+    console.error(`Error fetching document ${documentId}:`, error.message);
     return '';
   }
 }
@@ -141,13 +84,26 @@ async function getDocumentContent() {
   const now = Date.now();
   const ONE_HOUR = 60 * 60 * 1000;
   
-  // Refresh cache if older than 1 hour
+  // Refresh cache if older than 1 hour or empty
   if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
     console.log('Refreshing document cache...');
     
-    for (const [category, docId] of Object.entries(DOCUMENT_IDS)) {
-      if (docId && docId !== 'YOUR_' + category.toUpperCase() + '_DOC_ID') {
-        documentCache[category] = await fetchGoogleDoc(docId);
+    for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
+      documentCache[category] = '';
+      
+      // Handle both single doc ID (string) and multiple (array)
+      const ids = Array.isArray(docIds) ? docIds : [docIds];
+      
+      for (const docId of ids) {
+        // Skip placeholders
+        if (docId && !docId.includes('DOC_ID')) {
+          console.log(`Fetching ${category} document: ${docId}`);
+          const content = await fetchGoogleDoc(docId);
+          if (content) {
+            // Add document separator for clarity
+            documentCache[category] += `\n\n--- Document: ${docId} ---\n\n${content}`;
+          }
+        }
       }
     }
     
@@ -156,6 +112,11 @@ async function getDocumentContent() {
   
   return documentCache;
 }
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ status: 'Life Tracker AI Backend is running!' });
+});
 
 // AI Coach endpoint with Google Docs integration
 app.post('/api/ai-coach', async (req, res) => {
@@ -166,42 +127,68 @@ app.post('/api/ai-coach', async (req, res) => {
     const documents = await getDocumentContent();
     
     // Create comprehensive system prompt with document content
-    const systemPrompt = `You are an expert life coach using the Five Pillars framework. You have access to comprehensive knowledge from the following documents:
+    const systemPrompt = `You are a direct, no-nonsense life coach with access to comprehensive documents. Your responses must be practical and actionable.
 
-FINANCIAL SUCCESS PRINCIPLES:
+KNOWLEDGE BASE DOCUMENTS:
+
+FINANCIAL SUCCESS:
 ${documents.financial || 'No financial document loaded'}
 
-HEALTH & FITNESS PRINCIPLES:
+HEALTH & FITNESS:
 ${documents.health || 'No health document loaded'}
 
-RELATIONSHIPS PRINCIPLES:
+RELATIONSHIPS:
 ${documents.relationships || 'No relationships document loaded'}
 
-PERSONAL GROWTH PRINCIPLES:
+PERSONAL GROWTH:
 ${documents.growth || 'No growth document loaded'}
 
-PURPOSE & JOY PRINCIPLES:
+PURPOSE & JOY:
 ${documents.purpose || 'No purpose document loaded'}
 
-E-COMMERCE STRATEGIES:
+E-COMMERCE & BUSINESS:
 ${documents.ecommerce || 'No e-commerce document loaded'}
 
-Current user data:
+USER'S CURRENT STATUS:
 - Financial Success: ${context.pillars[0].value}% (Goal: ${context.pillars[0].goal}%)
 - Health & Fitness: ${context.pillars[1].value}% (Goal: ${context.pillars[1].goal}%)
 - Relationships: ${context.pillars[2].value}% (Goal: ${context.pillars[2].goal}%)
 - Personal Growth: ${context.pillars[3].value}% (Goal: ${context.pillars[3].goal}%)
 - Purpose & Joy: ${context.pillars[4].value}% (Goal: ${context.pillars[4].goal}%)
 - Overall Balance: ${context.overallScore}%
-- Lowest Pillar: ${context.lowestPillar.name} at ${context.lowestPillar.value}%
+- Weakest Area: ${context.lowestPillar.name} at ${context.lowestPillar.value}%
 
-Instructions:
-1. Reference specific principles from the documents when giving advice
-2. Synthesize information across different pillars when relevant
-3. Provide actionable steps based on their current scores
-4. Connect strategies from different documents to create holistic advice
-5. If asked to summarize, provide clear, structured summaries
-6. Be encouraging but direct, using exact principles from the documents`;
+STRICT INSTRUCTIONS:
+
+1. ALWAYS cite specific information from the documents. Use exact quotes when relevant.
+
+2. For business/e-commerce questions:
+   - Pull EXACT strategies from the e-commerce documents
+   - Give specific numbers, tools, and platforms mentioned
+   - Provide actionable steps, not general advice
+
+3. For step-by-step guides:
+   - Number each step clearly
+   - Include specific tools, metrics, or actions from the documents
+   - Add exact details (timeframes, percentages, tools mentioned in docs)
+
+4. When connecting pillars:
+   - Only connect them if the documents explicitly show a relationship
+   - Use the user's actual scores to prioritize advice
+   - Keep connections brief and relevant
+
+5. Response style:
+   - Start with the most relevant document information
+   - Be direct - no fluff or generic motivation
+   - Include specific principles with their exact wording from docs
+   - If documents don't cover something, say so
+
+6. For implementation questions:
+   - Give exact methods from the documents
+   - Include specific tools, apps, or platforms mentioned
+   - Provide measurable actions, not vague suggestions
+
+NEVER give generic advice. ALWAYS ground responses in the document content. If the user asks about something not in the documents, tell them exactly what IS available instead.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -222,7 +209,8 @@ Instructions:
     console.error('Error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to get AI response' 
+      error: 'Failed to get AI response',
+      details: error.message 
     });
   }
 });
@@ -235,14 +223,47 @@ app.get('/api/documents-status', async (req, res) => {
   for (const [category, content] of Object.entries(documents)) {
     status[category] = {
       loaded: content.length > 0,
-      characterCount: content.length
+      characterCount: content.length,
+      preview: content.substring(0, 100) + '...'
     };
   }
   
   res.json(status);
 });
 
+// Debug endpoint to see what content is actually loaded
+app.get('/api/debug-documents', async (req, res) => {
+  const documents = await getDocumentContent();
+  const preview = {};
+  
+  for (const [category, content] of Object.entries(documents)) {
+    preview[category] = {
+      loaded: content.length > 0,
+      firstWords: content.substring(0, 200) + '...',
+      totalLength: content.length
+    };
+  }
+  
+  res.json(preview);
+});
+
+// Endpoint to manually refresh document cache
+app.post('/api/refresh-documents', async (req, res) => {
+  cacheTimestamp = 0; // Force cache refresh
+  const documents = await getDocumentContent();
+  
+  res.json({ 
+    success: true, 
+    message: 'Document cache refreshed',
+    documentsLoaded: Object.keys(documents).filter(key => documents[key].length > 0)
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Initializing document cache...');
+  getDocumentContent().then(() => {
+    console.log('Document cache initialized');
+  });
 });
