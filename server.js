@@ -21,7 +21,7 @@ const auth = new google.auth.GoogleAuth({
 
 const docs = google.docs({ version: 'v1', auth });
 
-// Document IDs - Only real documents, no placeholders
+// Document IDs
 const DOCUMENT_IDS = {
   financial: [
     '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM', // Main financial principles
@@ -38,7 +38,6 @@ async function fetchGoogleDoc(documentId) {
     const res = await docs.documents.get({ documentId });
     const content = res.data;
     
-    // Extract text from document
     let text = '';
     content.body.content.forEach(element => {
       if (element.paragraph) {
@@ -57,15 +56,44 @@ async function fetchGoogleDoc(documentId) {
   }
 }
 
-// Cache for document content (refreshes every hour)
+// Function to summarize long documents
+async function summarizeDocument(text, category) {
+  if (text.length < 3000) return text; // Return as-is if short enough
+  
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: `Extract and summarize the KEY actionable principles from this ${category} document. Focus on specific strategies, exact methods, tools mentioned, and important numbers. Keep the most important details.`
+        },
+        {
+          role: "user",
+          content: text.substring(0, 10000) // Use first 10k chars for summary
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 1000
+    });
+    
+    return completion.choices[0].message.content;
+  } catch (error) {
+    console.error('Error summarizing document:', error);
+    // Fallback: return truncated version
+    return text.substring(0, 3000) + '\n\n[Document truncated due to length...]';
+  }
+}
+
+// Cache for document content
 let documentCache = {};
+let documentSummaries = {};
 let cacheTimestamp = 0;
 
 async function getDocumentContent() {
   const now = Date.now();
   const ONE_HOUR = 60 * 60 * 1000;
   
-  // Refresh cache if older than 1 hour or empty
   if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
     console.log('Refreshing document cache...');
     
@@ -73,17 +101,25 @@ async function getDocumentContent() {
     const allCategories = ['financial', 'health', 'relationships', 'growth', 'purpose', 'ecommerce'];
     allCategories.forEach(cat => {
       documentCache[cat] = '';
+      documentSummaries[cat] = '';
     });
     
-    // Load documents that exist
+    // Load and process documents
     for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
       const ids = Array.isArray(docIds) ? docIds : [docIds];
       
       for (const docId of ids) {
         console.log(`Fetching ${category} document: ${docId}`);
         const content = await fetchGoogleDoc(docId);
+        
         if (content) {
-          documentCache[category] += `\n\n--- Document ---\n\n${content}`;
+          // Store full content
+          documentCache[category] += content;
+          
+          // Create summary for AI context
+          console.log(`Creating summary for ${category} (${content.length} chars)`);
+          const summary = await summarizeDocument(content, category);
+          documentSummaries[category] += `\n\n--- ${category.toUpperCase()} PRINCIPLES ---\n${summary}`;
         }
       }
     }
@@ -91,7 +127,35 @@ async function getDocumentContent() {
     cacheTimestamp = now;
   }
   
-  return documentCache;
+  return { full: documentCache, summaries: documentSummaries };
+}
+
+// Search function for specific queries
+async function searchDocuments(query, category = null) {
+  const { full } = await getDocumentContent();
+  const results = [];
+  
+  const categories = category ? [category] : Object.keys(full);
+  
+  for (const cat of categories) {
+    const content = full[cat];
+    if (!content) continue;
+    
+    // Simple search - find paragraphs containing the query
+    const paragraphs = content.split('\n\n');
+    const matches = paragraphs.filter(p => 
+      p.toLowerCase().includes(query.toLowerCase())
+    ).slice(0, 3); // Top 3 matches
+    
+    if (matches.length > 0) {
+      results.push({
+        category: cat,
+        matches: matches
+      });
+    }
+  }
+  
+  return results;
 }
 
 // Health check endpoint
@@ -99,33 +163,33 @@ app.get('/', (req, res) => {
   res.json({ status: 'Life Tracker AI Backend is running!' });
 });
 
-// AI Coach endpoint with Google Docs integration
+// AI Coach endpoint with smart document handling
 app.post('/api/ai-coach', async (req, res) => {
   try {
     const { message, context } = req.body;
     
-    // Fetch latest document content
-    const documents = await getDocumentContent();
+    // Get document summaries (not full text)
+    const { summaries } = await getDocumentContent();
     
-    // Create comprehensive system prompt with document content
-    const systemPrompt = `You are a direct, no-nonsense life coach with access to comprehensive documents. Your responses must be practical and actionable.
+    // Search for specific content if the query seems specific
+    let searchResults = '';
+    const searchTerms = ['how to', 'what is', 'specific', 'exactly', 'step by step', 'method', 'strategy'];
+    
+    if (searchTerms.some(term => message.toLowerCase().includes(term))) {
+      const results = await searchDocuments(message);
+      if (results.length > 0) {
+        searchResults = '\n\nSPECIFIC MATCHES FROM DOCUMENTS:\n' + 
+          results.map(r => `${r.category}: ${r.matches.join(' ... ')}`).join('\n\n');
+      }
+    }
+    
+    const systemPrompt = `You are a direct, no-nonsense life coach with access to document summaries and specific search results.
 
-AVAILABLE KNOWLEDGE BASE:
+DOCUMENT SUMMARIES:
+${summaries.financial || 'No financial documents loaded'}
+${summaries.purpose || 'No purpose document loaded'}
 
-FINANCIAL SUCCESS & E-COMMERCE:
-${documents.financial || 'No financial documents loaded yet'}
-
-PURPOSE & JOY:
-${documents.purpose || 'No purpose document loaded yet'}
-
-HEALTH & FITNESS:
-${documents.health || 'No health documents loaded yet - using general principles'}
-
-RELATIONSHIPS:
-${documents.relationships || 'No relationship documents loaded yet - using general principles'}
-
-PERSONAL GROWTH:
-${documents.growth || 'No growth documents loaded yet - using general principles'}
+${searchResults}
 
 USER'S CURRENT STATUS:
 - Financial Success: ${context.pillars[0].value}% (Goal: ${context.pillars[0].goal}%)
@@ -136,26 +200,13 @@ USER'S CURRENT STATUS:
 - Overall Balance: ${context.overallScore}%
 - Weakest Area: ${context.lowestPillar.name} at ${context.lowestPillar.value}%
 
-STRICT INSTRUCTIONS:
+INSTRUCTIONS:
+1. Use the summaries and search results to provide specific advice
+2. If you need more detail on a topic, tell the user to ask a more specific question
+3. Reference exact strategies and principles from the summaries
+4. Be direct and actionable
 
-1. ALWAYS cite specific information from the documents when available. Use exact quotes.
-
-2. For business/e-commerce questions:
-   - Pull EXACT strategies from the financial/e-commerce documents
-   - Give specific numbers, tools, and platforms mentioned
-   - Provide actionable steps from the documents
-
-3. For areas without documents loaded:
-   - Be honest that no specific document is loaded for that area
-   - Offer to help with the areas where documents ARE loaded
-   - Suggest they add documents for more specific guidance
-
-4. Response style:
-   - Start with the most relevant document information
-   - Be direct - no fluff or generic motivation
-   - If documents don't cover something, say so clearly
-
-NEVER give generic advice when documents are available. ALWAYS ground responses in the actual document content.`;
+Keep responses focused and under 500 words.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -182,27 +233,28 @@ NEVER give generic advice when documents are available. ALWAYS ground responses 
   }
 });
 
-// Endpoint to check which documents are loaded
+// Endpoint to check document status
 app.get('/api/documents-status', async (req, res) => {
-  const documents = await getDocumentContent();
-  const status = {
-    financial: {
-      loaded: documents.financial.length > 0,
-      documentCount: DOCUMENT_IDS.financial ? DOCUMENT_IDS.financial.length : 0,
-      characterCount: documents.financial.length
-    },
-    purpose: {
-      loaded: documents.purpose.length > 0,
-      documentCount: DOCUMENT_IDS.purpose ? DOCUMENT_IDS.purpose.length : 0,
-      characterCount: documents.purpose.length
-    },
-    health: { loaded: false, documentCount: 0, characterCount: 0 },
-    relationships: { loaded: false, documentCount: 0, characterCount: 0 },
-    growth: { loaded: false, documentCount: 0, characterCount: 0 },
-    ecommerce: { loaded: false, documentCount: 0, characterCount: 0 }
-  };
+  const { full, summaries } = await getDocumentContent();
+  const status = {};
+  
+  for (const category of ['financial', 'purpose', 'health', 'relationships', 'growth']) {
+    status[category] = {
+      loaded: full[category] && full[category].length > 0,
+      documentCount: DOCUMENT_IDS[category] ? DOCUMENT_IDS[category].length : 0,
+      fullLength: full[category] ? full[category].length : 0,
+      summaryLength: summaries[category] ? summaries[category].length : 0
+    };
+  }
   
   res.json(status);
+});
+
+// Endpoint for direct document search
+app.post('/api/search-documents', async (req, res) => {
+  const { query, category } = req.body;
+  const results = await searchDocuments(query, category);
+  res.json({ results });
 });
 
 const PORT = process.env.PORT || 3000;
