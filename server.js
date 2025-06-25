@@ -21,33 +21,14 @@ const auth = new google.auth.GoogleAuth({
 
 const docs = google.docs({ version: 'v1', auth });
 
-// Document IDs - Multiple docs per category supported
+// Document IDs - Only real documents, no placeholders
 const DOCUMENT_IDS = {
   financial: [
     '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM', // Main financial principles
-    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60', // E-commerce strategies
-    'DOC_ID_3'  // Your investment guide doc (placeholder)
-  ],
-  health: [
-    'DOC_ID_4', // Physical fitness doc (placeholder)
-    'DOC_ID_5'  // Mental health & stress management doc (placeholder)
-  ],
-  relationships: [
-    'DOC_ID_6', // Family relationships doc (placeholder)
-    'DOC_ID_7', // Professional networking doc (placeholder)
-    'DOC_ID_8'  // Social connections doc (placeholder)
-  ],
-  growth: [
-    'DOC_ID_9',  // Learning strategies doc (placeholder)
-    'DOC_ID_10'  // Mindset principles doc (placeholder)
+    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60'  // E-commerce strategies
   ],
   purpose: [
     '1So9QI--hsQUj2FEKQoXcrjGLIo6zZzT02Wrm8MexP0E'  // Purpose and fulfillment doc
-  ],
-  ecommerce: [
-    'DOC_ID_12', // Dropshipping guide (placeholder)
-    'DOC_ID_13', // Website optimization doc (placeholder)
-    'DOC_ID_14'  // Marketing strategies doc (placeholder)
   ]
 };
 
@@ -88,21 +69,21 @@ async function getDocumentContent() {
   if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
     console.log('Refreshing document cache...');
     
+    // Initialize all categories
+    const allCategories = ['financial', 'health', 'relationships', 'growth', 'purpose', 'ecommerce'];
+    allCategories.forEach(cat => {
+      documentCache[cat] = '';
+    });
+    
+    // Load documents that exist
     for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
-      documentCache[category] = '';
-      
-      // Handle both single doc ID (string) and multiple (array)
       const ids = Array.isArray(docIds) ? docIds : [docIds];
       
       for (const docId of ids) {
-        // Skip placeholders
-        if (docId && !docId.includes('DOC_ID')) {
-          console.log(`Fetching ${category} document: ${docId}`);
-          const content = await fetchGoogleDoc(docId);
-          if (content) {
-            // Add document separator for clarity
-            documentCache[category] += `\n\n--- Document: ${docId} ---\n\n${content}`;
-          }
+        console.log(`Fetching ${category} document: ${docId}`);
+        const content = await fetchGoogleDoc(docId);
+        if (content) {
+          documentCache[category] += `\n\n--- Document ---\n\n${content}`;
         }
       }
     }
@@ -129,25 +110,22 @@ app.post('/api/ai-coach', async (req, res) => {
     // Create comprehensive system prompt with document content
     const systemPrompt = `You are a direct, no-nonsense life coach with access to comprehensive documents. Your responses must be practical and actionable.
 
-KNOWLEDGE BASE DOCUMENTS:
+AVAILABLE KNOWLEDGE BASE:
 
-FINANCIAL SUCCESS:
-${documents.financial || 'No financial document loaded'}
-
-HEALTH & FITNESS:
-${documents.health || 'No health document loaded'}
-
-RELATIONSHIPS:
-${documents.relationships || 'No relationships document loaded'}
-
-PERSONAL GROWTH:
-${documents.growth || 'No growth document loaded'}
+FINANCIAL SUCCESS & E-COMMERCE:
+${documents.financial || 'No financial documents loaded yet'}
 
 PURPOSE & JOY:
-${documents.purpose || 'No purpose document loaded'}
+${documents.purpose || 'No purpose document loaded yet'}
 
-E-COMMERCE & BUSINESS:
-${documents.ecommerce || 'No e-commerce document loaded'}
+HEALTH & FITNESS:
+${documents.health || 'No health documents loaded yet - using general principles'}
+
+RELATIONSHIPS:
+${documents.relationships || 'No relationship documents loaded yet - using general principles'}
+
+PERSONAL GROWTH:
+${documents.growth || 'No growth documents loaded yet - using general principles'}
 
 USER'S CURRENT STATUS:
 - Financial Success: ${context.pillars[0].value}% (Goal: ${context.pillars[0].goal}%)
@@ -160,35 +138,24 @@ USER'S CURRENT STATUS:
 
 STRICT INSTRUCTIONS:
 
-1. ALWAYS cite specific information from the documents. Use exact quotes when relevant.
+1. ALWAYS cite specific information from the documents when available. Use exact quotes.
 
 2. For business/e-commerce questions:
-   - Pull EXACT strategies from the e-commerce documents
+   - Pull EXACT strategies from the financial/e-commerce documents
    - Give specific numbers, tools, and platforms mentioned
-   - Provide actionable steps, not general advice
+   - Provide actionable steps from the documents
 
-3. For step-by-step guides:
-   - Number each step clearly
-   - Include specific tools, metrics, or actions from the documents
-   - Add exact details (timeframes, percentages, tools mentioned in docs)
+3. For areas without documents loaded:
+   - Be honest that no specific document is loaded for that area
+   - Offer to help with the areas where documents ARE loaded
+   - Suggest they add documents for more specific guidance
 
-4. When connecting pillars:
-   - Only connect them if the documents explicitly show a relationship
-   - Use the user's actual scores to prioritize advice
-   - Keep connections brief and relevant
-
-5. Response style:
+4. Response style:
    - Start with the most relevant document information
    - Be direct - no fluff or generic motivation
-   - Include specific principles with their exact wording from docs
-   - If documents don't cover something, say so
+   - If documents don't cover something, say so clearly
 
-6. For implementation questions:
-   - Give exact methods from the documents
-   - Include specific tools, apps, or platforms mentioned
-   - Provide measurable actions, not vague suggestions
-
-NEVER give generic advice. ALWAYS ground responses in the document content. If the user asks about something not in the documents, tell them exactly what IS available instead.`;
+NEVER give generic advice when documents are available. ALWAYS ground responses in the actual document content.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -218,45 +185,24 @@ NEVER give generic advice. ALWAYS ground responses in the document content. If t
 // Endpoint to check which documents are loaded
 app.get('/api/documents-status', async (req, res) => {
   const documents = await getDocumentContent();
-  const status = {};
-  
-  for (const [category, content] of Object.entries(documents)) {
-    status[category] = {
-      loaded: content.length > 0,
-      characterCount: content.length,
-      preview: content.substring(0, 100) + '...'
-    };
-  }
+  const status = {
+    financial: {
+      loaded: documents.financial.length > 0,
+      documentCount: DOCUMENT_IDS.financial ? DOCUMENT_IDS.financial.length : 0,
+      characterCount: documents.financial.length
+    },
+    purpose: {
+      loaded: documents.purpose.length > 0,
+      documentCount: DOCUMENT_IDS.purpose ? DOCUMENT_IDS.purpose.length : 0,
+      characterCount: documents.purpose.length
+    },
+    health: { loaded: false, documentCount: 0, characterCount: 0 },
+    relationships: { loaded: false, documentCount: 0, characterCount: 0 },
+    growth: { loaded: false, documentCount: 0, characterCount: 0 },
+    ecommerce: { loaded: false, documentCount: 0, characterCount: 0 }
+  };
   
   res.json(status);
-});
-
-// Debug endpoint to see what content is actually loaded
-app.get('/api/debug-documents', async (req, res) => {
-  const documents = await getDocumentContent();
-  const preview = {};
-  
-  for (const [category, content] of Object.entries(documents)) {
-    preview[category] = {
-      loaded: content.length > 0,
-      firstWords: content.substring(0, 200) + '...',
-      totalLength: content.length
-    };
-  }
-  
-  res.json(preview);
-});
-
-// Endpoint to manually refresh document cache
-app.post('/api/refresh-documents', async (req, res) => {
-  cacheTimestamp = 0; // Force cache refresh
-  const documents = await getDocumentContent();
-  
-  res.json({ 
-    success: true, 
-    message: 'Document cache refreshed',
-    documentsLoaded: Object.keys(documents).filter(key => documents[key].length > 0)
-  });
 });
 
 const PORT = process.env.PORT || 3000;
