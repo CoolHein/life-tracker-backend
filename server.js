@@ -21,15 +21,92 @@ const auth = new google.auth.GoogleAuth({
 
 const docs = google.docs({ version: 'v1', auth });
 
-// Document IDs - Add your Google Doc IDs here
+// Document IDs - Now supports multiple docs per category
 const DOCUMENT_IDS = {
-  financial: 'YOUR_FINANCIAL_DOC_ID',
-  health: 'YOUR_HEALTH_DOC_ID', 
-  relationships: 'YOUR_RELATIONSHIPS_DOC_ID',
-  growth: 'YOUR_GROWTH_DOC_ID',
-  purpose: 'YOUR_PURPOSE_DOC_ID',
-  ecommerce: 'YOUR_ECOMMERCE_DOC_ID'
+  financial: [
+    '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM/edit?tab=t.0#heading=h.q2mx0byt7fz0', // Your main financial principles doc
+    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60/edit?tab=t.0#heading=h.waxohxqw4j1p', // Your e-commerce strategies doc
+    'DOC_ID_3'  // Your investment guide doc
+  ],
+  health: [
+    'DOC_ID_4', // Physical fitness doc
+    'DOC_ID_5'  // Mental health & stress management doc
+  ],
+  relationships: [
+    'DOC_ID_6', // Family relationships doc
+    'DOC_ID_7', // Professional networking doc
+    'DOC_ID_8'  // Social connections doc
+  ],
+  growth: [
+    'DOC_ID_9',  // Learning strategies doc
+    'DOC_ID_10'  // Mindset principles doc
+  ],
+  purpose: [
+    '1So9QI--hsQUj2FEKQoXcrjGLIo6zZzT02Wrm8MexP0E'  // Purpose and fulfillment doc
+  ],
+  ecommerce: [
+    'DOC_ID_12', // Dropshipping guide
+    'DOC_ID_13', // Website optimization doc
+    'DOC_ID_14'  // Marketing strategies doc
+  ]
 };
+
+// Updated function to fetch multiple docs per category
+async function getDocumentContent() {
+  const now = Date.now();
+  const ONE_HOUR = 60 * 60 * 1000;
+  
+  if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
+    console.log('Refreshing document cache...');
+    
+    for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
+      documentCache[category] = '';
+      
+      // Handle both single doc ID (string) and multiple (array)
+      const ids = Array.isArray(docIds) ? docIds : [docIds];
+      
+      for (const docId of ids) {
+        if (docId && !docId.includes('DOC_ID')) {
+          const content = await fetchGoogleDoc(docId);
+          if (content) {
+            // Add document separator for clarity
+            documentCache[category] += `\n\n--- Document: ${docId} ---\n\n${content}`;
+          }
+        }
+      }
+    }
+    
+    cacheTimestamp = now;
+  }
+  
+  return documentCache;
+}
+
+// Optional: Enhanced status endpoint to show all loaded docs
+app.get('/api/documents-status', async (req, res) => {
+  const status = {};
+  
+  for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
+    const ids = Array.isArray(docIds) ? docIds : [docIds];
+    status[category] = {
+      documentCount: ids.length,
+      documents: []
+    };
+    
+    for (const docId of ids) {
+      if (docId && !docId.includes('DOC_ID')) {
+        const content = await fetchGoogleDoc(docId);
+        status[category].documents.push({
+          id: docId,
+          loaded: content.length > 0,
+          characterCount: content.length
+        });
+      }
+    }
+  }
+  
+  res.json(status);
+});
 
 // Function to fetch and parse Google Doc content
 async function fetchGoogleDoc(documentId) {
