@@ -2,11 +2,73 @@ const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
 const { google } = require('googleapis');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/lifetracker', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => {
+  console.log('Connected to MongoDB');
+}).catch(err => {
+  console.error('MongoDB connection error:', err);
+});
+
+// Define Mongoose Schemas
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  password: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+  lastLogin: { type: Date, default: Date.now }
+});
+
+const userDataSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  pillars: {
+    type: [{
+      id: Number,
+      name: String,
+      value: Number,
+      goal: Number,
+      color: String,
+      icon: String,
+      description: String
+    }],
+    default: [
+      { id: 1, name: 'Financial Success', value: 50, goal: 80, color: '#FFD700', icon: '💰', description: 'Wealth & Financial Freedom' },
+      { id: 2, name: 'Health & Fitness', value: 50, goal: 90, color: '#4CAF50', icon: '💪', description: 'Physical & Mental Well-being' },
+      { id: 3, name: 'Relationships', value: 50, goal: 85, color: '#2196F3', icon: '❤️', description: 'Family, Friends & Community' },
+      { id: 4, name: 'Personal Growth', value: 50, goal: 75, color: '#9C27B0', icon: '🧠', description: 'Learning & Self-Development' },
+      { id: 5, name: 'Purpose & Joy', value: 50, goal: 90, color: '#E91E63', icon: '✨', description: 'Fulfillment & Happiness' }
+    ]
+  },
+  history: [{
+    date: Date,
+    values: [{
+      name: String,
+      value: Number
+    }],
+    overall: Number
+  }],
+  settings: {
+    userName: String,
+    dailyReminder: { type: Boolean, default: false },
+    weeklyReport: { type: Boolean, default: false }
+  },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+// Create models
+const User = mongoose.model('User', userSchema);
+const UserData = mongoose.model('UserData', userDataSchema);
 
 // Initialize OpenAI
 const openai = new OpenAI({
@@ -21,18 +83,39 @@ const auth = new google.auth.GoogleAuth({
 
 const docs = google.docs({ version: 'v1', auth });
 
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
+
+// Middleware to verify JWT token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Authentication required' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
 // Document IDs
 const DOCUMENT_IDS = {
   financial: [
-    '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM', // Main financial principles
-    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60'  // E-commerce strategies
+    '13ng_EnHnFt-vJ60RV7ek9msWdwlLwo60QGd6t36UqCM',
+    '11VKfDVcShlSQjC2RsQSLBbFn1bI7W0h9tw5v5FYVP60'
   ],
   purpose: [
-    '1So9QI--hsQUj2FEKQoXcrjGLIo6zZzT02Wrm8MexP0E'  // Purpose and fulfillment doc
+    '1So9QI--hsQUj2FEKQoXcrjGLIo6zZzT02Wrm8MexP0E'
   ]
 };
 
-// Function to fetch and parse Google Doc content
+// Your existing document functions
 async function fetchGoogleDoc(documentId) {
   try {
     const res = await docs.documents.get({ documentId });
@@ -56,15 +139,12 @@ async function fetchGoogleDoc(documentId) {
   }
 }
 
-// Function to extract key content
 function extractKeyContent(text, maxLength = 4000) {
-  // Look for numbered lists and important sections
   const lines = text.split('\n');
   const keyContent = [];
   let currentSection = '';
   
   for (const line of lines) {
-    // Capture headers, numbered items, and key phrases
     if (line.match(/^\d+\.|^[A-Z][^.]+:|^•|Key|Important|Essential|Step|Method/)) {
       if (currentSection) {
         keyContent.push(currentSection);
@@ -83,7 +163,6 @@ function extractKeyContent(text, maxLength = 4000) {
   return keyContent.join('\n\n');
 }
 
-// Cache for document content
 let documentCache = {};
 let documentSummaries = {};
 let cacheTimestamp = 0;
@@ -95,14 +174,12 @@ async function getDocumentContent() {
   if (now - cacheTimestamp > ONE_HOUR || Object.keys(documentCache).length === 0) {
     console.log('Refreshing document cache...');
     
-    // Initialize all categories
     const allCategories = ['financial', 'health', 'relationships', 'growth', 'purpose', 'ecommerce'];
     allCategories.forEach(cat => {
       documentCache[cat] = '';
       documentSummaries[cat] = '';
     });
     
-    // Load and process documents
     for (const [category, docIds] of Object.entries(DOCUMENT_IDS)) {
       const ids = Array.isArray(docIds) ? docIds : [docIds];
       
@@ -111,10 +188,7 @@ async function getDocumentContent() {
         const content = await fetchGoogleDoc(docId);
         
         if (content) {
-          // Store full content
           documentCache[category] += content;
-          
-          // Extract key content for summaries
           console.log(`Extracting key content for ${category} (${content.length} chars)`);
           const keyContent = extractKeyContent(content);
           documentSummaries[category] += `\n\n--- ${category.toUpperCase()} KEY CONTENT ---\n${keyContent}`;
@@ -128,7 +202,6 @@ async function getDocumentContent() {
   return { full: documentCache, summaries: documentSummaries };
 }
 
-// Search function for specific content
 async function searchDocuments(query, category = null) {
   const { full } = await getDocumentContent();
   const results = [];
@@ -140,7 +213,6 @@ async function searchDocuments(query, category = null) {
     const content = full[cat];
     if (!content) continue;
     
-    // Find relevant sections
     const sections = content.split(/\n\n+/);
     const matches = sections.filter(section => 
       section.toLowerCase().includes(searchTerm)
@@ -157,32 +229,244 @@ async function searchDocuments(query, category = null) {
   return results;
 }
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ status: 'Life Tracker AI Backend is running!' });
+// ============= AUTHENTICATION ENDPOINTS =============
+
+// Sign up endpoint
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // Validate input
+    if (!email || !password || !name) {
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters' });
+    }
+
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword
+    });
+
+    await user.save();
+
+    // Create initial user data
+    const userData = new UserData({
+      userId: user._id
+    });
+
+    await userData.save();
+
+    // Generate token
+    const token = jwt.sign(
+      { id: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      token,
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email 
+      }
+    });
+
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
-// AI Coach endpoint with improved document handling
+// Login endpoint
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Verify password
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Generate token
+    const token = jwt.sign(
+      { id: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      token,
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email 
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify token endpoint
+app.get('/api/auth/verify', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json({
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email 
+      }
+    });
+  } catch (error) {
+    console.error('Verify error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Forgot password endpoint
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  
+  const user = await User.findOne({ email });
+  if (!user) {
+    // Don't reveal if user exists
+    return res.json({ message: 'If an account exists, a reset link has been sent' });
+  }
+
+  // TODO: Implement email sending
+  const resetToken = jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
+  console.log(`Password reset token for ${email}: ${resetToken}`);
+
+  res.json({ message: 'If an account exists, a reset link has been sent' });
+});
+
+// ============= USER DATA ENDPOINTS =============
+
+// Get user data
+app.get('/api/user/data', authenticateToken, async (req, res) => {
+  try {
+    const userData = await UserData.findOne({ userId: req.user.id });
+    
+    if (!userData) {
+      return res.status(404).json({ message: 'User data not found' });
+    }
+
+    res.json({
+      pillars: userData.pillars,
+      history: userData.history,
+      settings: userData.settings
+    });
+  } catch (error) {
+    console.error('Get data error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Save user data
+app.post('/api/user/data', authenticateToken, async (req, res) => {
+  try {
+    const { pillars, history, settings } = req.body;
+    
+    const userData = await UserData.findOneAndUpdate(
+      { userId: req.user.id },
+      {
+        $set: {
+          ...(pillars && { pillars }),
+          ...(history && { history }),
+          ...(settings && { settings }),
+          updatedAt: new Date()
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Data saved successfully' 
+    });
+  } catch (error) {
+    console.error('Save data error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ============= YOUR EXISTING ENDPOINTS =============
+
+// Health check endpoints
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Life Tracker AI Backend is running!',
+    version: '1.0.0',
+    endpoints: {
+      auth: ['/api/auth/login', '/api/auth/signup', '/api/auth/verify'],
+      user: ['/api/user/data'],
+      ai: ['/api/ai-coach'],
+      docs: ['/api/documents-status', '/api/search-documents']
+    }
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// AI Coach endpoint
 app.post('/api/ai-coach', async (req, res) => {
   try {
     const { message, context } = req.body;
     
-    // Get document content
     const { summaries, full } = await getDocumentContent();
     
-    // Enhanced search for structured content
     let specificContent = '';
     
-    // Keywords that trigger detailed search
     const detailKeywords = ['step by step', 'guide', 'how to', 'how do i', 'steps', 'process', 'method', 'blueprint', 'specific', 'exactly'];
     const needsDetail = detailKeywords.some(keyword => message.toLowerCase().includes(keyword));
     
     if (needsDetail) {
       const searchResults = await searchDocuments(message);
       
-      // Look for structured content in full documents
       if (message.toLowerCase().includes('dropshipping') || message.toLowerCase().includes('ecommerce')) {
-        // Extract the e-commerce blueprint if available
         for (const [category, content] of Object.entries(full)) {
           if (content.includes('E-Commerce Success Blueprint') || content.includes('dropshipping')) {
             const blueprintMatch = content.match(/E-Commerce Success Blueprint[\s\S]*?(?=\n\n[A-Z]|$)/);
@@ -194,7 +478,6 @@ app.post('/api/ai-coach', async (req, res) => {
         }
       }
       
-      // Add search results
       if (searchResults.length > 0) {
         specificContent += '\n\nSPECIFIC SECTIONS:\n';
         searchResults.forEach(result => {
@@ -237,52 +520,3 @@ Provide the most specific, document-based answer possible.`;
       temperature: 0.3,
       max_tokens: 800
     });
-
-    res.json({ 
-      success: true,
-      response: completion.choices[0].message.content 
-    });
-
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to get AI response',
-      details: error.message 
-    });
-  }
-});
-
-// Document status endpoint
-app.get('/api/documents-status', async (req, res) => {
-  const { full, summaries } = await getDocumentContent();
-  const status = {};
-  
-  const categories = ['financial', 'purpose', 'health', 'relationships', 'growth'];
-  for (const category of categories) {
-    status[category] = {
-      loaded: full[category] && full[category].length > 0,
-      documentCount: DOCUMENT_IDS[category] ? DOCUMENT_IDS[category].length : 0,
-      fullLength: full[category] ? full[category].length : 0,
-      summaryLength: summaries[category] ? summaries[category].length : 0
-    };
-  }
-  
-  res.json(status);
-});
-
-// Search endpoint
-app.post('/api/search-documents', async (req, res) => {
-  const { query, category } = req.body;
-  const results = await searchDocuments(query, category);
-  res.json({ results });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log('Initializing document cache...');
-  getDocumentContent().then(() => {
-    console.log('Document cache initialized');
-  });
-});
