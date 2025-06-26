@@ -1,7 +1,7 @@
 {
   "name": "life-tracker-backend",
   "version": "1.0.0",
-  "description": "Life Tracker AI Backend",
+  "description": "Life Tracker AI Backend with Authentication",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -14,12 +14,16 @@
     "googleapis": "^118.0.0",
     "dotenv": "^16.0.3",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.0"
+    "jsonwebtoken": "^9.0.0",
+    "mongoose": "^8.0.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
   },
   "engines": {
     "node": ">=14.0.0"
-  }
+  },
+  "keywords": ["life-tracker", "ai", "express", "mongodb"],
+  "author": "Your Name",
+  "license": "MIT"
 }
