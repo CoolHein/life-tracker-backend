@@ -410,6 +410,118 @@ app.post('/api/user/data', authenticateToken, async (req, res) => {
   }
 });
 
+// ============= AI ENDPOINTS =============
+
+// AI Coach endpoint
+app.post('/api/ai-coach', authenticateToken, async (req, res) => {
+  try {
+    const { message, context } = req.body;
+    
+    // Get user's current data
+    const userData = await UserData.findOne({ userId: req.user.id });
+    
+    // Prepare context for AI
+    const systemPrompt = `You are a life coach AI assistant helping users improve their life balance across 5 pillars: Financial Success, Health & Fitness, Relationships, Personal Growth, and Purpose & Joy. 
+    
+Current user data:
+${userData ? JSON.stringify(userData.pillars, null, 2) : 'No data available'}
+
+Provide actionable, encouraging advice. Keep responses concise and practical.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    });
+
+    res.json({
+      response: completion.choices[0].message.content
+    });
+
+  } catch (error) {
+    console.error('AI Coach error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get AI response',
+      message: error.message 
+    });
+  }
+});
+
+// AI Insights endpoint
+app.post('/api/ai-insights', authenticateToken, async (req, res) => {
+  try {
+    const { pillars } = req.body;
+    
+    const prompt = `Based on these life balance scores:
+${JSON.stringify(pillars, null, 2)}
+
+Provide 3 specific, actionable insights to help improve the lowest scoring areas. Format as a JSON array of objects with 'pillar' and 'insight' fields.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: "You are a life coach providing data-driven insights. Always respond with valid JSON." },
+        { role: "user", content: prompt }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    });
+
+    const insights = JSON.parse(completion.choices[0].message.content);
+    
+    res.json({ insights });
+
+  } catch (error) {
+    console.error('AI Insights error:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate insights',
+      message: error.message 
+    });
+  }
+});
+
+// Document search endpoint (using your existing document functions)
+app.post('/api/search-documents', authenticateToken, async (req, res) => {
+  try {
+    const { query, category } = req.body;
+    
+    if (!query) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+
+    const results = await searchDocuments(query, category);
+    
+    res.json({ results });
+
+  } catch (error) {
+    console.error('Document search error:', error);
+    res.status(500).json({ 
+      error: 'Failed to search documents',
+      message: error.message 
+    });
+  }
+});
+
+// Get document summaries endpoint
+app.get('/api/document-summaries', authenticateToken, async (req, res) => {
+  try {
+    const { summaries } = await getDocumentContent();
+    
+    res.json({ summaries });
+
+  } catch (error) {
+    console.error('Document summaries error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get document summaries',
+      message: error.message 
+    });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
