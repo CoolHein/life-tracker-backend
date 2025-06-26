@@ -114,8 +114,7 @@ const DOCUMENT_IDS = {
     '1So9QI--hsQUj2FEKQoXcrjGLIo6zZzT02Wrm8MexP0E'
   ]
 };
-
-// Your existing document functions
+// Document functions
 async function fetchGoogleDoc(documentId) {
   try {
     const res = await docs.documents.get({ documentId });
@@ -236,7 +235,6 @@ app.post('/api/auth/signup', async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Validate input
     if (!email || !password || !name) {
       return res.status(400).json({ message: 'All fields are required' });
     }
@@ -245,16 +243,13 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Password must be at least 8 characters' });
     }
 
-    // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
     const user = new User({
       name,
       email,
@@ -263,14 +258,12 @@ app.post('/api/auth/signup', async (req, res) => {
 
     await user.save();
 
-    // Create initial user data
     const userData = new UserData({
       userId: user._id
     });
 
     await userData.save();
 
-    // Generate token
     const token = jwt.sign(
       { id: user._id, email: user.email },
       JWT_SECRET,
@@ -297,23 +290,19 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Verify password
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Update last login
     user.lastLogin = new Date();
     await user.save();
 
-    // Generate token
     const token = jwt.sign(
       { id: user._id, email: user.email },
       JWT_SECRET,
@@ -362,11 +351,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   
   const user = await User.findOne({ email });
   if (!user) {
-    // Don't reveal if user exists
     return res.json({ message: 'If an account exists, a reset link has been sent' });
   }
 
-  // TODO: Implement email sending
   const resetToken = jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
   console.log(`Password reset token for ${email}: ${resetToken}`);
 
@@ -422,101 +409,3 @@ app.post('/api/user/data', authenticateToken, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
-// ============= YOUR EXISTING ENDPOINTS =============
-
-// Health check endpoints
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'Life Tracker AI Backend is running!',
-    version: '1.0.0',
-    endpoints: {
-      auth: ['/api/auth/login', '/api/auth/signup', '/api/auth/verify'],
-      user: ['/api/user/data'],
-      ai: ['/api/ai-coach'],
-      docs: ['/api/documents-status', '/api/search-documents']
-    }
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  });
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-
-// AI Coach endpoint
-app.post('/api/ai-coach', async (req, res) => {
-  try {
-    const { message, context } = req.body;
-    
-    const { summaries, full } = await getDocumentContent();
-    
-    let specificContent = '';
-    
-    const detailKeywords = ['step by step', 'guide', 'how to', 'how do i', 'steps', 'process', 'method', 'blueprint', 'specific', 'exactly'];
-    const needsDetail = detailKeywords.some(keyword => message.toLowerCase().includes(keyword));
-    
-    if (needsDetail) {
-      const searchResults = await searchDocuments(message);
-      
-      if (message.toLowerCase().includes('dropshipping') || message.toLowerCase().includes('ecommerce')) {
-        for (const [category, content] of Object.entries(full)) {
-          if (content.includes('E-Commerce Success Blueprint') || content.includes('dropshipping')) {
-            const blueprintMatch = content.match(/E-Commerce Success Blueprint[\s\S]*?(?=\n\n[A-Z]|$)/);
-            if (blueprintMatch) {
-              specificContent = '\n\nEXACT BLUEPRINT FROM DOCUMENTS:\n' + blueprintMatch[0];
-              break;
-            }
-          }
-        }
-      }
-      
-      if (searchResults.length > 0) {
-        specificContent += '\n\nSPECIFIC SECTIONS:\n';
-        searchResults.forEach(result => {
-          specificContent += `\nFrom ${result.category}:\n${result.matches.join('\n---\n')}`;
-        });
-      }
-    }
-    
-    const systemPrompt = `You are a direct AI coach with access to specific business documents. Your job is to provide EXACT information from the documents, not generic advice.
-
-AVAILABLE CONTENT:
-${summaries.financial || 'No financial content'}
-${summaries.purpose || 'No purpose content'}
-
-${specificContent}
-
-USER STATUS:
-- Financial: ${context.pillars[0].value}%
-- Health: ${context.pillars[1].value}%
-- Relationships: ${context.pillars[2].value}%
-- Growth: ${context.pillars[3].value}%
-- Purpose: ${context.pillars[4].value}%
-
-CRITICAL INSTRUCTIONS:
-1. When users ask for guides, steps, or methods, use the EXACT structure from documents
-2. Include ALL specific details: tools (Dropship.io, TikTok burner, Loox, Klaviyo), percentages (65%+ margins, 30% scaling), methods (ABO testing, Advantage+ Shopping)
-3. NEVER create generic advice when specific strategies exist in documents
-4. If documents contain numbered steps or blueprints, reproduce them EXACTLY
-5. Quote directly from documents whenever possible
-
-User asked: "${message}"
-Provide the most specific, document-based answer possible.`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: message }
-      ],
-      temperature: 0.3,
-      max_tokens: 800
-    });
