@@ -522,6 +522,47 @@ app.get('/api/document-summaries', authenticateToken, async (req, res) => {
   }
 });
 
+// Documents status endpoint
+app.get('/api/documents-status', authenticateToken, async (req, res) => {
+  try {
+    // Get the current document cache status
+    const { full, summaries } = await getDocumentContent();
+    
+    // Check which categories have content loaded
+    const status = {
+      financial: {
+        loaded: !!(full.financial && full.financial.length > 0),
+        documentCount: DOCUMENT_IDS.financial ? DOCUMENT_IDS.financial.length : 0
+      },
+      purpose: {
+        loaded: !!(full.purpose && full.purpose.length > 0),
+        documentCount: DOCUMENT_IDS.purpose ? DOCUMENT_IDS.purpose.length : 0
+      },
+      health: {
+        loaded: !!(full.health && full.health.length > 0),
+        documentCount: 0 // No health documents defined in DOCUMENT_IDS
+      },
+      relationships: {
+        loaded: !!(full.relationships && full.relationships.length > 0),
+        documentCount: 0 // No relationships documents defined in DOCUMENT_IDS
+      },
+      growth: {
+        loaded: !!(full.growth && full.growth.length > 0),
+        documentCount: 0 // No growth documents defined in DOCUMENT_IDS
+      }
+    };
+    
+    res.json(status);
+    
+  } catch (error) {
+    console.error('Documents status error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get documents status',
+      message: error.message 
+    });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
